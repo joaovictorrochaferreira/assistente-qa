@@ -265,7 +265,3 @@ qa-toolkit package skill\cenarios-de-teste --output dist
 python -m playwright install chromium
 pytest tests\e2e --base-url https://joaovictorrochaferreira.github.io/assistente-qa/
 ```
-
-## 8. Licença
-
-MIT. Veja [LICENSE](LICENSE).
