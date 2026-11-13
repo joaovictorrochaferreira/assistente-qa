@@ -1,0 +1,4 @@
+# Copie para terraform.tfvars (que fica fora do git) e ajuste se precisar.
+# O token vai SÓ na variável de ambiente GITHUB_TOKEN, nunca neste arquivo.
+github_owner    = "joaovictorrochaferreira"
+repository_name = "assistente-qa"

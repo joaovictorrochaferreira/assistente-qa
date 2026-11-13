@@ -1,0 +1,51 @@
+# Instalação (uma vez): pre-commit install
+# Rodar em tudo:        pre-commit run --all-files
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.4
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.2
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: terraform-fmt
+        name: terraform fmt
+        entry: terraform fmt -recursive infra/terraform
+        language: system
+        files: \.tf$
+        pass_filenames: false
+
+      # Os dois hooks abaixo rodam o qa-toolkit direto de src/, sem depender da venv ativa.
+      - id: validar-skill
+        name: validar skill cenarios-de-teste
+        entry: python -c "import sys; sys.path.insert(0, 'src'); from qa_toolkit.cli import main; sys.exit(main())" validate-skill skill/cenarios-de-teste
+        language: python
+        additional_dependencies: ["PyYAML>=6.0"]
+        files: ^skill/
+        pass_filenames: false
+
+      - id: lint-features
+        name: lint dos arquivos .feature
+        entry: python -c "import sys; sys.path.insert(0, 'src'); from qa_toolkit.cli import main; sys.exit(main())" lint-features
+        language: python
+        additional_dependencies: ["PyYAML>=6.0"]
+        files: \.feature$
+        exclude: ^tests/fixtures/features/invalidos/

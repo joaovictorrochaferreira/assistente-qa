@@ -1,0 +1,11 @@
+title = "gitleaks do assistente-qa"
+
+# Usa todas as regras padrão do gitleaks.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Arquivos que contêm hashes públicos, não segredos"
+paths = [
+  '''\.terraform\.lock\.hcl$''',
+]

@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Testes e relatórios
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+reports/
+site/
+test-results/
+
+# Ferramentas
+.ruff_cache/
+
+# Terraform (estado e variáveis podem conter dados sensíveis)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+*tfplan*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Segredos e ambiente local
+.env
+.env.*
+
+# Sistema e editor
+.DS_Store
+Thumbs.db
+.idea/

@@ -1,0 +1,5 @@
+# Guarda tudo com LF no repositório, igual ao Linux do CI, mesmo editando no Windows.
+* text=auto eol=lf
+
+*.zip binary
+*.png binary

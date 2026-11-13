@@ -1,0 +1,270 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Em PRs, um push novo cancela a execução anterior. Na main, nunca cancela um deploy em andamento.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHON_VERSION: "3.12"
+  TERRAFORM_VERSION: "1.17.1"
+  GITLEAKS_VERSION: "8.24.2"
+  IS_MAIN_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # histórico completo para a varredura de segredos
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar ferramentas de lint
+        run: pip install -e ".[lint]"
+
+      - name: Ruff (regras de código)
+        run: ruff check --output-format=github .
+
+      - name: Ruff (formatação)
+        run: ruff format --check .
+
+      - name: Varredura de segredos (gitleaks)
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks git --config .gitleaks.toml --redact --verbose --exit-code 1 .
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar pacote e dependências de teste
+        run: pip install -e ".[test]"
+
+      - name: Testes unitários com cobertura (mínimo 90%)
+        run: >
+          pytest
+          --cov --cov-report=term-missing
+          --cov-report=xml:reports/coverage.xml
+          --cov-report=html:site/cobertura
+          --junitxml=reports/junit.xml
+          --html=site/relatorio/index.html --self-contained-html
+
+      - name: Gerar página inicial do relatório
+        if: ${{ !cancelled() }}
+        run: >
+          qa-toolkit build-site
+          --junit reports/junit.xml
+          --coverage reports/coverage.xml
+          --output site
+          --run-id "${{ github.run_id }}"
+          --commit "${{ github.sha }}"
+
+      - name: Guardar relatórios como artefato
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-testes
+          path: |
+            site/
+            reports/
+          retention-days: 14
+
+      - name: Preparar artefato do GitHub Pages
+        if: ${{ env.IS_MAIN_PUSH == 'true' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar qa-toolkit
+        run: pip install -e .
+
+      - name: Validar a skill
+        run: qa-toolkit validate-skill skill/cenarios-de-teste
+
+      - name: Validar os arquivos .feature
+        run: qa-toolkit lint-features features
+
+  build:
+    name: build
+    needs: [lint, test, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar qa-toolkit e build
+        run: pip install -e . build
+
+      - name: Empacotar a skill (.zip)
+        run: qa-toolkit package skill/cenarios-de-teste --output dist
+
+      - name: Conferir o conteúdo do pacote
+        run: python -m zipfile -l dist/cenarios-de-teste.zip
+
+      - name: Construir o pacote Python (wheel e sdist)
+        run: python -m build --outdir dist/python
+
+      - name: Publicar o .zip da skill como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: cenarios-de-teste-skill
+          path: dist/cenarios-de-teste.zip
+          if-no-files-found: error
+
+      - name: Publicar o pacote Python como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-toolkit-python
+          path: dist/python/
+          if-no-files-found: error
+
+  deploy-pages:
+    name: deploy-pages
+    needs: [build]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publicar relatório no GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  e2e:
+    name: e2e
+    needs: [deploy-pages]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar dependências E2E
+        run: pip install -e ".[e2e]"
+
+      - name: Instalar o Chromium do Playwright
+        run: python -m playwright install --with-deps chromium
+
+      - name: Testes E2E no relatório publicado
+        env:
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+        run: >
+          pytest tests/e2e
+          --base-url "${{ needs.deploy-pages.outputs.page_url }}"
+          --browser chromium
+          --tracing retain-on-failure
+          --output test-results
+
+      - name: Guardar traces do Playwright em caso de falha
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  terraform:
+    name: terraform (${{ matrix.stack }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [github, aws]
+    defaults:
+      run:
+        working-directory: infra/terraform/${{ matrix.stack }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff ..
+
+      - name: terraform init
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        run: terraform validate
+
+      # Só a stack do GitHub tem plan: ela não precisa de credenciais para planejar.
+      # A stack da AWS nunca é aplicada e não tem credenciais no CI.
+      - name: terraform plan
+        if: ${{ matrix.stack == 'github' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_repository_name: ${{ github.event.repository.name }}
+        run: |
+          terraform plan -input=false -no-color -lock=false -out=tfplan
+          {
+            echo "### terraform plan (${{ matrix.stack }})"
+            echo
+            echo "Plano especulativo: o estado real fica com quem aplica, então o CI mostra a configuração completa."
+            echo
+            echo '```'
+            terraform show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
