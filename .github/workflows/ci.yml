@@ -88,7 +88,7 @@ jobs:
 
       - name: Guardar relatórios como artefato
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: relatorio-testes
           path: |
@@ -151,14 +151,14 @@ jobs:
         run: python -m build --outdir dist/python
 
       - name: Publicar o .zip da skill como artefato
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cenarios-de-teste-skill
           path: dist/cenarios-de-teste.zip
           if-no-files-found: error
 
       - name: Publicar o pacote Python como artefato
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: qa-toolkit-python
           path: dist/python/
@@ -215,7 +215,7 @@ jobs:
 
       - name: Guardar traces do Playwright em caso de falha
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-traces
           path: test-results/
@@ -243,7 +243,7 @@ jobs:
 
       - name: Publicar logs como artefato
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: logs-docker-ci
           path: logs-docker.txt
