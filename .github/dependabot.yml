@@ -1,0 +1,37 @@
+# Abre pull requests semanais atualizando dependências com correções de segurança e versões novas.
+# Cada PR passa pelo mesmo pipeline de CI antes de poder entrar na main.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["tipo: melhoria"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["area: ci"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["area: infra"]
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["area: infra"]
+
+  - package-ecosystem: terraform
+    directories:
+      - /infra/terraform/github
+      - /infra/terraform/aws
+    schedule:
+      interval: weekly
+    labels: ["area: infra"]

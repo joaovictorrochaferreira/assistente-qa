@@ -5,6 +5,8 @@ Uso:
     qa-toolkit lint-features features
     qa-toolkit package skill/cenarios-de-teste --output dist
     qa-toolkit build-site --junit reports/junit.xml --coverage reports/coverage.xml --output site
+    qa-toolkit serve --host 0.0.0.0 --port 8000
+    qa-toolkit smoke-test --url http://localhost:8000 --prometheus-url http://localhost:9090
 """
 
 from __future__ import annotations
@@ -25,6 +27,32 @@ from qa_toolkit.skill_validator import validate_skill
 def _report(issues: list[Issue]) -> None:
     for issue in issues:
         print(f"ERRO {issue}", file=sys.stderr)
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+
+        from qa_toolkit.api import create_app
+    except ImportError:
+        print("ERRO dependências da API ausentes: pip install 'qa-toolkit[api]'", file=sys.stderr)
+        return 1
+    # access_log desligado: a própria API registra cada requisição em JSON.
+    uvicorn.run(create_app(), host=args.host, port=args.port, access_log=False, log_level="warning")
+    return 0
+
+
+def _cmd_smoke_test(args: argparse.Namespace) -> int:
+    from qa_toolkit.smoke import run_smoke
+
+    checks = run_smoke(args.url, args.prometheus_url, attempts=args.tentativas, interval=args.intervalo)
+    for check in checks:
+        print(f"{'OK  ' if check.ok else 'FALHA'} {check.nome}: {check.detalhe}")
+    if all(check.ok for check in checks):
+        print("Teste de fumaça aprovado.")
+        return 0
+    print("Teste de fumaça reprovado.", file=sys.stderr)
+    return 1
 
 
 def _cmd_validate_skill(args: argparse.Namespace) -> int:
@@ -99,6 +127,18 @@ def build_parser() -> argparse.ArgumentParser:
     site.add_argument("--run-id", default="local", help="ID da execução do CI")
     site.add_argument("--commit", default="local", help="SHA do commit")
     site.set_defaults(func=_cmd_build_site)
+
+    serve = sub.add_parser("serve", help="sobe a API HTTP")
+    serve.add_argument("--host", default="127.0.0.1", help="endereço de escuta")
+    serve.add_argument("--port", type=int, default=8000, help="porta")
+    serve.set_defaults(func=_cmd_serve)
+
+    smoke = sub.add_parser("smoke-test", help="testa uma API já implantada")
+    smoke.add_argument("--url", required=True, help="URL base da API")
+    smoke.add_argument("--prometheus-url", help="URL do Prometheus, para conferir a coleta de métricas")
+    smoke.add_argument("--tentativas", type=int, default=20, help="tentativas até a API ficar saudável")
+    smoke.add_argument("--intervalo", type=float, default=3.0, help="segundos entre tentativas")
+    smoke.set_defaults(func=_cmd_smoke_test)
     return parser
 
 

@@ -1,0 +1,30 @@
+# Regras de alerta avaliadas pelo Prometheus (aba "Alerts" em http://localhost:9090/alerts).
+groups:
+  - name: qa-toolkit
+    rules:
+      - alert: ApiForaDoAr
+        expr: up{job="qa-toolkit"} == 0
+        for: 1m
+        labels:
+          severidade: critica
+        annotations:
+          resumo: "A API do qa-toolkit não responde há mais de 1 minuto"
+
+      - alert: TaxaDeErroAlta
+        expr: |
+          sum(rate(qa_toolkit_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(qa_toolkit_http_requests_total[5m])), 1e-9) > 0.05
+        for: 5m
+        labels:
+          severidade: alta
+        annotations:
+          resumo: "Mais de 5% das requisições terminam em erro 5xx"
+
+      - alert: LatenciaAlta
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(qa_toolkit_http_request_duration_seconds_bucket[5m]))) > 0.5
+        for: 5m
+        labels:
+          severidade: media
+        annotations:
+          resumo: "95% das requisições levam mais de 500 ms"

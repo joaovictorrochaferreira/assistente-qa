@@ -21,6 +21,11 @@ locals {
   ]
 }
 
+# Dono do repositório: é quem aprova os deploys em produção.
+data "github_user" "owner" {
+  username = var.github_owner
+}
+
 module "governance" {
   source = "../modules/github-repo-governance"
 
@@ -29,4 +34,9 @@ module "governance" {
   required_status_checks = var.required_status_checks
   labels                 = local.labels
   topics                 = local.topics
+
+  environments = {
+    homologacao = { reviewer_ids = [], wait_timer = 0 }
+    producao    = { reviewer_ids = [tonumber(data.github_user.owner.id)], wait_timer = 0 }
+  }
 }

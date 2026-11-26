@@ -168,3 +168,19 @@ def test_problema_informa_arquivo_e_linha(skill):
 )
 def test_slugify_segue_o_padrao_do_github(title, slug):
     assert slugify(title) == slug
+
+
+def test_modo_standalone_ignora_pasta_e_links_para_arquivos(skill):
+    from qa_toolkit.skill_validator import validate_skill_text
+
+    text = (skill / "SKILL.md").read_text(encoding="utf-8").replace("name: cenarios-de-teste", "name: outra")
+    text = text.replace("referencias/guia.md#técnicas", "nao-existe.md")
+    assert validate_skill_text(text, skill / "SKILL.md", standalone=True) == []
+
+
+def test_modo_standalone_ainda_confere_ancoras_internas(skill):
+    from qa_toolkit.skill_validator import validate_skill_text
+
+    text = (skill / "SKILL.md").read_text(encoding="utf-8").replace("(#formato-de-saída-obrigatório)", "(#x)")
+    issues = validate_skill_text(text, skill / "SKILL.md", standalone=True)
+    assert [issue.message for issue in issues] == ["âncora interna inexistente: #x"]

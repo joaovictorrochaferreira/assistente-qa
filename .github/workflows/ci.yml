@@ -221,6 +221,38 @@ jobs:
           path: test-results/
           retention-days: 7
 
+  docker:
+    name: docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint do Dockerfile (hadolint)
+        run: docker run --rm -i hadolint/hadolint:v2.12.0 < Dockerfile
+
+      - name: Validar o docker-compose.yml
+        run: docker compose config --quiet
+
+      - name: Deploy local completo (build, compose e teste de fumaça)
+        run: bash scripts/deploy.sh local
+
+      - name: Guardar logs dos containers
+        if: ${{ always() }}
+        run: docker compose -p qa-local logs --no-color --timestamps > logs-docker.txt || true
+
+      - name: Publicar logs como artefato
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-docker-ci
+          path: logs-docker.txt
+          retention-days: 7
+
+      - name: Derrubar o ambiente
+        if: ${{ always() }}
+        run: docker compose -p qa-local down -v
+
   terraform:
     name: terraform (${{ matrix.stack }})
     runs-on: ubuntu-latest

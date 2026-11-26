@@ -17,3 +17,8 @@ output "topics" {
   description = "Tópicos aplicados ao repositório."
   value       = sort(var.topics)
 }
+
+output "environments" {
+  description = "Ambientes de deploy e se exigem aprovação."
+  value       = { for name, env in var.environments : name => length(env.reviewer_ids) > 0 ? "com aprovação" : "automático" }
+}

@@ -61,3 +61,17 @@ variable "topics" {
     error_message = "Tópicos devem ter até 50 caracteres, só minúsculas, números e hífens."
   }
 }
+
+variable "environments" {
+  description = "Ambientes de deploy do GitHub Actions. reviewer_ids: IDs numéricos de quem precisa aprovar (vazio = sem aprovação)."
+  type = map(object({
+    reviewer_ids = list(number)
+    wait_timer   = number
+  }))
+  default = {}
+
+  validation {
+    condition     = alltrue([for env in values(var.environments) : env.wait_timer >= 0 && env.wait_timer <= 43200])
+    error_message = "wait_timer deve ficar entre 0 e 43200 minutos."
+  }
+}

@@ -17,3 +17,8 @@ output "topics" {
   description = "Tópicos do repositório."
   value       = module.governance.topics
 }
+
+output "environments" {
+  description = "Ambientes de deploy do pipeline de CD."
+  value       = module.governance.environments
+}

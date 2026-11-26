@@ -1,12 +1,18 @@
 # assistente-qa
 
 [![CI](https://github.com/joaovictorrochaferreira/assistente-qa/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/joaovictorrochaferreira/assistente-qa/actions/workflows/ci.yml)
+[![CD](https://github.com/joaovictorrochaferreira/assistente-qa/actions/workflows/cd.yml/badge.svg)](https://github.com/joaovictorrochaferreira/assistente-qa/actions/workflows/cd.yml)
 
-Projeto da disciplina DevOps na Prática (PUCRS), Fase 1: Configuração e Automação Inicial.
+Projeto da disciplina DevOps na Prática (PUCRS).
+Fase 1: Configuração e Automação Inicial (seções 1 a 6).
+Fase 2: Entrega Contínua, Containers, Monitoramento e Segurança (seções 7 a 10).
 
 - Repositório: https://github.com/joaovictorrochaferreira/assistente-qa
 - Pipeline de CI: https://github.com/joaovictorrochaferreira/assistente-qa/actions/workflows/ci.yml
+- Pipeline de CD: https://github.com/joaovictorrochaferreira/assistente-qa/actions/workflows/cd.yml
 - Relatório de testes: https://joaovictorrochaferreira.github.io/assistente-qa/
+- Imagens Docker: https://github.com/joaovictorrochaferreira/assistente-qa/pkgs/container/assistente-qa
+- Versões liberadas: https://github.com/joaovictorrochaferreira/assistente-qa/releases
 
 ## 1. Descrição do projeto
 
@@ -32,6 +38,9 @@ Python com quatro comandos:
 
 O pipeline de CI roda esses comandos a cada push e pull request, junto com lint, testes e
 a verificação do Terraform.
+
+Na Fase 2, o qa-toolkit ganhou também uma API HTTP (`qa-toolkit serve`), que roda em
+container e é entregue pelo pipeline de CD. Ela está descrita na seção 7.
 
 ## 2. Objetivos
 
@@ -74,8 +83,15 @@ a verificação do Terraform.
 
 ```
 .github/workflows/ci.yml        Pipeline de CI (GitHub Actions)
+.github/workflows/cd.yml        Pipeline de CD: imagem, segurança, homologação e produção
+.github/dependabot.yml          Atualização automática de dependências
 skill/cenarios-de-teste/        A skill de QA (SKILL.md)
-src/qa_toolkit/                 Pacote Python: validador, linter, empacotador e relatório
+src/qa_toolkit/                 Pacote Python: validador, linter, empacotador, relatório e API
+Dockerfile                      Imagem da API (dois estágios, usuário sem privilégios)
+docker-compose.yml              Orquestração: API + Prometheus + Grafana
+deploy/*.env                    Configuração de cada ambiente (homologação e produção)
+deploy/monitoramento/           Prometheus (coleta e alertas) e painel do Grafana
+scripts/deploy.sh, deploy.ps1   Scripts de deploy com teste de fumaça e rollback
 features/                       Arquivos .feature de exemplo, conferidos no CI
 tests/unit/                     Testes unitários (pytest)
 tests/e2e/                      Teste E2E do relatório publicado (pytest-playwright)
@@ -117,6 +133,7 @@ flowchart LR
     validate --> build
     build --> deploy-pages
     deploy-pages --> e2e
+    docker
     tf_github["terraform (github)"]
     tf_aws["terraform (aws)"]
 ```
@@ -129,10 +146,11 @@ flowchart LR
 | `build` | Gera o `.zip` da skill e o pacote Python e guarda os dois como artefatos | A skill é inválida ou o empacotamento falha |
 | `deploy-pages` | Publica o relatório no GitHub Pages (só na `main`) | A publicação falha |
 | `e2e` | Abre o relatório publicado com o Playwright e confere status, falhas, cobertura e links | O relatório não mostra a execução atual aprovada |
+| `docker` | Lint do Dockerfile (hadolint), validação do Compose e deploy local completo com teste de fumaça (Fase 2) | A imagem não constrói, a API não fica saudável ou o teste de fumaça falha |
 | `terraform (github)` | `fmt`, `init`, `validate` e `plan` da stack do GitHub | Formatação, sintaxe ou plano inválidos |
 | `terraform (aws)` | `fmt`, `init` e `validate` da stack AWS | Formatação ou sintaxe inválidas |
 
-`lint`, `test`, `validate` e os dois `terraform` rodam em paralelo. O `build` só começa se
+`lint`, `test`, `validate`, `docker` e os dois `terraform` rodam em paralelo. O `build` só começa se
 os três primeiros passarem. O E2E espera o Pages mostrar o ID da execução atual antes de
 conferir, porque logo depois do deploy o Pages ainda pode estar servindo a versão anterior.
 
@@ -146,8 +164,8 @@ E2E falha, os traces do Playwright (`playwright-traces`) ficam 7 dias para inves
 ### 5.5 Proteção da `main`
 
 O Terraform (seção 6.2) configura a `main` para só aceitar merge com `lint`, `test`,
-`validate`, `build`, `terraform (github)` e `terraform (aws)` aprovados e com a branch
-atualizada. Force push e exclusão da `main` ficam bloqueados.
+`validate`, `build`, `docker`, `terraform (github)` e `terraform (aws)` aprovados e com a
+branch atualizada. Force push e exclusão da `main` ficam bloqueados.
 
 ### 5.6 Verificações antes do commit (pre-commit)
 
@@ -181,9 +199,10 @@ Fica em `infra/terraform/github/` e usa o módulo `modules/github-repo-governanc
 | `github_branch_protection` | Branch `main`; checks obrigatórios do CI; branch atualizada antes do merge (`strict`); histórico linear; conversas resolvidas antes do merge; sem force push; sem exclusão. `enforce_admins = false`, para o dono do repositório poder corrigir a `main` numa emergência. |
 | `github_issue_label` (7) | `tipo: bug`, `tipo: melhoria`, `area: skill`, `area: ci`, `area: infra`, `area: testes`, `area: documentacao` |
 | `github_repository_topics` | `devops`, `github-actions`, `terraform`, `qa`, `gherkin`, `test-automation`, `python`, `claude-skill` |
+| `github_repository_environment` (2, Fase 2) | `homologacao`, sem aprovação, e `producao`, que exige a aprovação do dono do repositório antes de cada deploy. Nos dois, só a branch protegida (`main`) pode implantar. |
 
 Variáveis: `github_owner` (obrigatória), `repository_name` (padrão `assistente-qa`) e
-`required_status_checks` (padrão: os seis jobs obrigatórios do CI).
+`required_status_checks` (padrão: os sete jobs obrigatórios do CI).
 
 Para aplicar (PowerShell):
 
@@ -233,7 +252,279 @@ terminal. No CI, o workflow usa o `GITHUB_TOKEN` automático do Actions com perm
 arquivos `*.tfstate`, `*.tfvars` e `.env` estão no `.gitignore`. O gitleaks confere o
 histórico completo no CI e os arquivos alterados em cada commit.
 
-## 7. Como rodar localmente (Windows, PowerShell)
+## 7. Fase 2: API, containers e orquestração
+
+### 7.1 A API
+
+`qa-toolkit serve` sobe uma API HTTP ([src/qa_toolkit/api.py](src/qa_toolkit/api.py)), feita
+com FastAPI, que expõe as mesmas validações da linha de comando:
+
+| Rota | O que faz |
+|---|---|
+| `GET /health` | Diz se o serviço está no ar. Usada pelo Docker, pelo deploy e pelo teste de fumaça. |
+| `POST /lint` | Recebe `{"conteudo": "<texto do .feature>"}` e devolve os problemas, com linha e motivo. |
+| `POST /validate-skill` | Recebe `{"conteudo": "<texto do SKILL.md>"}` e devolve os problemas. |
+| `GET /metrics` | Métricas no formato do Prometheus. |
+| `GET /docs` | Documentação interativa gerada pelo FastAPI. |
+
+Exemplo de uso, com a API rodando (PowerShell do Windows):
+
+```powershell
+$texto = [IO.File]::ReadAllText((Resolve-Path features\login.feature))   # lê em UTF-8
+$corpo = [Text.Encoding]::UTF8.GetBytes((@{ conteudo = $texto } | ConvertTo-Json))
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/lint -Body $corpo -ContentType "application/json; charset=utf-8"
+# {"valido": true, "total_problemas": 0, "problemas": []}
+```
+
+No Linux ou no Git Bash:
+
+```bash
+curl -X POST http://localhost:8000/lint -H "Content-Type: application/json" \
+  -d '{"conteudo": "CT001 - Sem contexto\nDADO algo\nQUANDO\n"}'
+# {"valido": false, "total_problemas": 3, "problemas": [...]}
+```
+
+A configuração vem de variáveis de ambiente, então a mesma imagem serve todos os ambientes:
+`QA_TOOLKIT_AMBIENTE` (nome do ambiente), `QA_TOOLKIT_LOG_LEVEL` (nível de log) e
+`QA_TOOLKIT_MAX_BYTES` (tamanho máximo do conteúdo enviado, 256 KB por padrão; acima disso a
+API responde 413).
+
+### 7.2 Container (Docker)
+
+O [Dockerfile](Dockerfile) tem dois estágios. O primeiro gera o pacote wheel a partir do
+código. O segundo instala só esse pacote numa imagem `python:3.12-slim` limpa, sem
+código-fonte nem ferramentas de build. A imagem final tem cerca de 200 MB.
+
+Segurança da imagem e do container:
+- roda com o usuário `app` (uid 10001), nunca como root;
+- no Compose, o sistema de arquivos do container é somente leitura, todas as *capabilities*
+  do Linux são removidas e `no-new-privileges` impede a escalada de privilégio;
+- limites de CPU (0,5) e memória (256 MB);
+- `HEALTHCHECK` chama `/health` a cada 10 segundos.
+
+### 7.3 Orquestração (Docker Compose)
+
+O [docker-compose.yml](docker-compose.yml) sobe três serviços que trabalham juntos:
+
+| Serviço | Papel | Endereço local |
+|---|---|---|
+| `api` | A API do qa-toolkit | http://localhost:8000 |
+| `prometheus` | Coleta as métricas da API a cada 5 segundos e avalia as regras de alerta | http://localhost:9090 |
+| `grafana` | Painel com requisições, latência, validações e problemas encontrados | http://localhost:3000 |
+
+O Prometheus só sobe depois que a API fica saudável (`depends_on` com `service_healthy`), e
+cada serviço reinicia sozinho se cair (`restart: unless-stopped`). As portas ficam presas em
+`127.0.0.1`, então nada é exposto para a rede.
+
+Cada ambiente tem seu arquivo de configuração em [deploy/](deploy/): `homologacao.env` usa as
+portas 8001, 9091 e 3001 e log em nível DEBUG, e `producao.env` usa as portas 8000, 9090 e
+3000 e log em nível INFO. Os dois podem rodar ao mesmo tempo na mesma máquina.
+
+### 7.4 Scripts de deploy
+
+[scripts/deploy.sh](scripts/deploy.sh) (usado pelo CI) e [scripts/deploy.ps1](scripts/deploy.ps1)
+(para Windows) fazem as mesmas etapas:
+
+1. obtêm a imagem: constroem se for `qa-toolkit:local`, usam a da máquina se já existir, ou
+   baixam do registro;
+2. sobem os três containers e esperam a API ficar saudável (até 120 segundos);
+3. rodam o teste de fumaça de dentro do container da API (`qa-toolkit smoke-test`): conferem
+   `/health`, um `/lint` com arquivo válido, um `/lint` com arquivo inválido, `/metrics` e se
+   o Prometheus está coletando a API;
+4. se tudo passar, gravam a imagem como a última aprovada daquele ambiente;
+5. se algo falhar, mostram os logs da API, **voltam para a última imagem aprovada (rollback)**
+   e terminam com erro, o que deixa o pipeline vermelho.
+
+```powershell
+# Windows: constrói a imagem local e sobe tudo
+powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Ambiente local
+
+# Homologação com uma imagem publicada pelo CD
+powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Ambiente homologacao -Imagem ghcr.io/joaovictorrochaferreira/assistente-qa:latest
+
+# Derrubar um ambiente
+docker compose -p qa-local down -v
+```
+
+O rollback foi testado forçando o deploy de uma imagem que não sobe: o script detectou a
+falha, mostrou o erro nos logs e voltou sozinho para a versão anterior.
+
+## 8. Fase 2: pipeline de entrega contínua (CD)
+
+### 8.1 Como funciona
+
+O [cd.yml](.github/workflows/cd.yml) começa sozinho quando o CI termina **com sucesso** na
+`main`. Ele usa exatamente o commit que o CI testou.
+
+| Job | O que faz | Barreira |
+|---|---|---|
+| `publicar-imagem` | Constrói a imagem e publica no GitHub Container Registry com a tag `sha-<commit>`, com SBOM e proveniência | O build falha |
+| `seguranca` | Trivy procura vulnerabilidades na imagem e pip-audit nas dependências Python | Vulnerabilidade crítica com correção disponível, ou qualquer vulnerabilidade conhecida nas dependências |
+| `deploy-homologacao` | Faz o deploy com `scripts/deploy.sh`, roda o teste de fumaça, gera tráfego com os `.feature` de exemplo e guarda logs e métricas como artefato | Teste de fumaça falha (com rollback) |
+| `deploy-producao` | **Espera a aprovação manual** no GitHub. Depois promove a **mesma imagem** aprovada em homologação para as tags `vX.Y.N` e `latest`, faz o deploy com teste de fumaça e cria uma Release com o `.zip` da skill | Sem aprovação, nada acontece. Teste de fumaça falha (com rollback) |
+
+### 8.2 Entrega contínua, não implantação contínua
+
+Tudo até homologação é automático. A ida para produção depende de uma pessoa clicar em
+"Approve" na execução do CD (o ambiente `producao` exige revisor, configurado pelo Terraform).
+Essa é a diferença entre **entrega contínua** (o software está sempre pronto para ser liberado,
+e a liberação é uma decisão de negócio) e **implantação contínua** (tudo vai para produção
+sem intervenção).
+
+### 8.3 Construir uma vez, promover a mesma imagem
+
+A imagem é construída uma única vez, em `publicar-imagem`. Produção recebe a mesma imagem que
+passou por homologação, identificada pelo *digest* (a impressão digital do conteúdo). Só se
+acrescentam tags novas, sem novo build. Assim, o que vai para produção é exatamente o que foi
+testado.
+
+### 8.4 Ambientes e a limitação conhecida
+
+Os ambientes de homologação e produção sobem dentro da máquina temporária do GitHub Actions e
+são descartados ao final do job. O pipeline prova que a imagem sobe, responde e é monitorada,
+mas não há um servidor permanente. A Release e a imagem `latest` ficam publicadas para qualquer
+pessoa rodar com `scripts/deploy.ps1` ou `docker run`. Um servidor permanente está nas
+melhorias futuras (seção 10).
+
+## 9. Fase 2: monitoramento, logs e segurança
+
+### 9.1 Monitoramento
+
+A API expõe em `/metrics`:
+
+| Métrica | O que mede |
+|---|---|
+| `qa_toolkit_http_requests_total` | Requisições, por método, rota e status |
+| `qa_toolkit_http_request_duration_seconds` | Tempo de resposta, em faixas (histograma) |
+| `qa_toolkit_validacoes_total` | Validações, por tipo (feature ou skill) e resultado (aprovado ou reprovado) |
+| `qa_toolkit_problemas_encontrados_total` | Problemas apontados, por tipo |
+| `qa_toolkit_build_info` | Versão e ambiente em execução |
+
+O Prometheus tem três regras de alerta em [alertas.yml](deploy/monitoramento/alertas.yml):
+`ApiForaDoAr` (a API não responde há 1 minuto), `TaxaDeErroAlta` (mais de 5% de erros 5xx) e
+`LatenciaAlta` (95% das requisições acima de 500 ms). O Grafana já sobe com o painel
+`qa-toolkit` configurado, sem nenhum passo manual.
+
+### 9.2 Logs
+
+Cada requisição gera uma linha de log em JSON, na saída padrão do container:
+
+```json
+{"timestamp": "2026-11-26T21:04:30.86+00:00", "nivel": "INFO", "logger": "qa_toolkit.api",
+ "mensagem": "requisição atendida", "request_id": "cdc0883c...", "metodo": "GET",
+ "rota": "/metrics", "status": 200, "duracao_ms": 3.93, "ambiente": "local"}
+```
+
+O `request_id` volta no cabeçalho `X-Request-ID` da resposta, para ligar uma reclamação do
+usuário à linha de log certa. Respostas 4xx e 5xx são registradas como `WARNING`. O Docker
+guarda até 3 arquivos de 10 MB por container, e o CD publica os logs de homologação como
+artefato.
+
+### 9.3 Segurança no pipeline
+
+| Onde | O que verifica |
+|---|---|
+| pre-commit e CI (`lint`) | gitleaks: segredos no código e no histórico |
+| CI (`docker`) | hadolint: boas práticas no Dockerfile |
+| CD (`seguranca`) | Trivy: vulnerabilidades no sistema e nas bibliotecas da imagem |
+| CD (`seguranca`) | pip-audit: vulnerabilidades conhecidas nas dependências Python |
+| CD (`publicar-imagem`) | SBOM (lista de tudo que está na imagem) e proveniência do build |
+| Dependabot | Pull requests semanais atualizando pip, Actions, Docker e Terraform |
+| GitHub | Ambiente `producao` com aprovação obrigatória; `main` protegida |
+
+## 10. Fluxograma completo e análise
+
+### 10.1 Fluxograma (Fases 1 e 2)
+
+```mermaid
+flowchart TD
+    dev([Desenvolvedor]) --> pc["pre-commit<br/>ruff, gitleaks, terraform fmt,<br/>validação da skill e dos .feature"]
+    pc --> push[push ou pull request no GitHub]
+
+    subgraph CI["CI: ci.yml (Fase 1 + job docker da Fase 2)"]
+        direction TB
+        lint["lint<br/>ruff + gitleaks"]
+        test["test<br/>pytest, cobertura mínima de 90%"]
+        validate["validate<br/>skill + .feature"]
+        docker["docker<br/>hadolint, build, compose,<br/>teste de fumaça"]
+        tf["terraform<br/>fmt, validate, plan"]
+        build["build<br/>zip da skill + pacote Python"]
+        pages["deploy-pages<br/>relatório no GitHub Pages"]
+        e2e["e2e<br/>Playwright no relatório"]
+        lint --> build
+        test --> build
+        validate --> build
+        build --> pages --> e2e
+    end
+
+    push --> CI
+    CI -->|"CI verde na main"| CD
+
+    subgraph CD["CD: cd.yml (Fase 2)"]
+        direction TB
+        img["publicar-imagem<br/>GHCR, tag sha-commit, SBOM"]
+        sec["seguranca<br/>Trivy + pip-audit"]
+        hml["deploy-homologacao<br/>deploy.sh + teste de fumaça"]
+        aprov{{"aprovação manual<br/>ambiente producao"}}
+        prd["deploy-producao<br/>promove a mesma imagem,<br/>deploy + teste de fumaça"]
+        rel["Release vX.Y.N<br/>zip da skill + imagem latest"]
+        img --> sec --> hml --> aprov --> prd --> rel
+    end
+
+    hml -. falha .-> rb1[rollback automático]
+    prd -. falha .-> rb2[rollback automático]
+
+    subgraph OBS["Execução e observabilidade (Docker Compose)"]
+        api[API qa-toolkit] --> prom[Prometheus<br/>métricas e alertas] --> graf[Grafana<br/>painel]
+        api --> logs[logs JSON]
+    end
+
+    hml --> OBS
+    prd --> OBS
+
+    tfapply["Terraform aplicado pelo dono<br/>proteção da main, labels, tópicos,<br/>ambientes homologacao e producao"] -.-> CI
+    tfapply -.-> aprov
+```
+
+### 10.2 Resultados
+
+- Todo push na `main` passa por 8 jobs de CI e, se aprovado, por 4 jobs de CD, sem passo manual
+  além da aprovação de produção.
+- 118 testes automatizados, com cobertura de 99,9% (mínimo exigido: 90%).
+- A imagem não tem vulnerabilidades críticas com correção disponível, e as dependências Python
+  não têm vulnerabilidades conhecidas.
+- O deploy sobe API, Prometheus e Grafana e valida tudo com teste de fumaça; o rollback foi
+  testado com uma imagem defeituosa.
+- A configuração do GitHub (proteção, labels, tópicos e ambientes) é toda versionada em Terraform.
+
+### 10.3 Limitações
+
+- **Sem servidor permanente:** homologação e produção existem só durante a execução do CD.
+- **Dependências sem versão exata:** o `pyproject.toml` define versões mínimas, então dois builds
+  em dias diferentes podem instalar versões diferentes das bibliotecas.
+- **Estado do Terraform local:** fica na máquina de quem aplica, sem trava contra aplicações
+  simultâneas e sem histórico.
+- **Alertas sem destino:** o Prometheus avalia as regras, mas não há Alertmanager para avisar
+  alguém por e-mail ou chat.
+- **Rollback por ambiente local:** a "última versão aprovada" fica num arquivo na máquina que fez
+  o deploy, não num lugar compartilhado.
+- **A stack AWS nunca foi aplicada:** está validada, mas não testada de verdade.
+
+### 10.4 Melhorias futuras
+
+1. Publicar a API num serviço com servidor permanente (por exemplo, Render, Fly.io ou um
+   Kubernetes gerenciado) e fazer o CD implantar lá.
+2. Gerar um arquivo de lock com versões exatas das dependências (por exemplo, com `uv lock` ou
+   `pip-tools`) e instalar a imagem a partir dele.
+3. Mover o estado do Terraform para um backend remoto com trava (por exemplo, S3 + DynamoDB ou
+   HCP Terraform).
+4. Adicionar o Alertmanager para enviar os alertas a um canal de chat.
+5. Fazer *deploy canário* ou *blue-green*, liberando a versão nova para parte do tráfego antes
+   de trocar tudo.
+6. Assinar as imagens com cosign e só aceitar imagens assinadas no deploy.
+7. Testes de carga (por exemplo, com k6) no pipeline, para medir a latência antes de produção.
+
+## 11. Como rodar localmente (Windows, PowerShell)
 
 ```powershell
 py -3.12 -m venv .venv
@@ -246,6 +537,12 @@ pytest --cov
 qa-toolkit validate-skill skill\cenarios-de-teste
 qa-toolkit lint-features features
 qa-toolkit package skill\cenarios-de-teste --output dist
+
+# API sem Docker
+qa-toolkit serve --port 8000
+
+# API + Prometheus + Grafana com Docker (precisa do Docker Desktop aberto)
+powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1 -Ambiente local
 
 # E2E contra o relatório publicado
 python -m playwright install chromium

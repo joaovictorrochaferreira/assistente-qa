@@ -17,6 +17,7 @@ variable "required_status_checks" {
     "test",
     "validate",
     "build",
+    "docker",
     "terraform (github)",
     "terraform (aws)",
   ]

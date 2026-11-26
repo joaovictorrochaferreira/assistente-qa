@@ -1,0 +1,26 @@
+# Só pyproject.toml, README.md e src/ entram na imagem.
+.git
+.github
+.venv
+venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.coverage
+build
+dist
+site
+reports
+test-results
+tests
+features
+skill
+infra
+deploy
+scripts
+docs
+.deploy
+*.egg-info
+.env
+.env.*

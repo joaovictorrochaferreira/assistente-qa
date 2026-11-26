@@ -1,0 +1,73 @@
+# Orquestração local: API + Prometheus (métricas e alertas) + Grafana (painel).
+#
+# Rodar local:        docker compose up -d --build
+# Deploy por ambiente: scripts/deploy.sh homologacao <imagem>   (veja deploy/*.env)
+#
+# As portas ficam presas em 127.0.0.1: nada é exposto para a rede.
+
+services:
+  api:
+    image: ${QA_TOOLKIT_IMAGE:-qa-toolkit:local}
+    build: .
+    environment:
+      QA_TOOLKIT_AMBIENTE: ${AMBIENTE:-local}
+      QA_TOOLKIT_LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      QA_TOOLKIT_MAX_BYTES: ${MAX_BYTES:-262144}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./deploy/monitoramento/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/monitoramento/alertas.yml:/etc/prometheus/alertas.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-trocar-esta-senha}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/qa-toolkit.json
+    volumes:
+      - ./deploy/monitoramento/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/monitoramento/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:

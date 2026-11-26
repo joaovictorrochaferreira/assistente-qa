@@ -87,3 +87,38 @@ def test_execucao_como_modulo(monkeypatch, capsys):
     with pytest.raises(SystemExit) as exit_info:
         runpy.run_module("qa_toolkit", run_name="__main__")
     assert exit_info.value.code == 0
+
+
+def test_serve_chama_o_uvicorn(monkeypatch):
+    import uvicorn
+
+    called = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: called.update(kwargs, app=app))
+    assert main(["serve", "--host", "0.0.0.0", "--port", "9000"]) == 0
+    assert called["host"] == "0.0.0.0"
+    assert called["port"] == 9000
+    assert called["access_log"] is False
+
+
+def test_serve_sem_dependencias_da_api(monkeypatch, capsys):
+    monkeypatch.setitem(sys.modules, "uvicorn", None)
+    assert main(["serve"]) == 1
+    assert "qa-toolkit[api]" in capsys.readouterr().err
+
+
+def test_smoke_test_aprovado(monkeypatch, capsys):
+    from qa_toolkit import smoke
+
+    monkeypatch.setattr(smoke, "run_smoke", lambda *a, **k: [smoke.Check("health", True, "ok")])
+    assert main(["smoke-test", "--url", "http://x"]) == 0
+    assert "Teste de fumaça aprovado" in capsys.readouterr().out
+
+
+def test_smoke_test_reprovado(monkeypatch, capsys):
+    from qa_toolkit import smoke
+
+    monkeypatch.setattr(smoke, "run_smoke", lambda *a, **k: [smoke.Check("health", False, "fora do ar")])
+    assert main(["smoke-test", "--url", "http://x", "--tentativas", "1"]) == 1
+    captured = capsys.readouterr()
+    assert "FALHA health: fora do ar" in captured.out
+    assert "reprovado" in captured.err

@@ -79,7 +79,11 @@ def lint_file(path: Path) -> list[Issue]:
         text = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
         return [Issue(path, "arquivo não está em UTF-8")]
+    return lint_text(text, path)
 
+
+def lint_text(text: str, path: Path) -> list[Issue]:
+    """Verifica o conteúdo de um .feature já carregado; ``path`` só identifica a origem."""
     issues: list[Issue] = []
     blocks: list[_Block] = []
     current: _Block | None = None

@@ -1,0 +1,254 @@
+name: CD
+
+# Entrega contínua: roda quando o CI termina com sucesso na main.
+# Fluxo: publicar imagem -> segurança -> homologação (automática) -> produção (com aprovação manual).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  # No workflow_run, o commit testado pelo CI é o head_sha; no disparo manual, o próprio sha.
+  COMMIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  publicar-imagem:
+    name: publicar-imagem
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      imagem: ${{ steps.tags.outputs.imagem }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.COMMIT_SHA }}
+
+      - name: Definir tags da imagem
+        id: tags
+        run: |
+          curto="${COMMIT_SHA::7}"
+          echo "imagem=${IMAGE_NAME}:sha-${curto}" >> "$GITHUB_OUTPUT"
+          echo "main=${IMAGE_NAME}:main" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login no GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construir e publicar a imagem
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.imagem }}
+            ${{ steps.tags.outputs.main }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.COMMIT_SHA }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Resumo
+        run: |
+          {
+            echo "### Imagem publicada"
+            echo
+            echo "- Tag: \`${{ steps.tags.outputs.imagem }}\`"
+            echo "- Digest: \`${{ steps.build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  seguranca:
+    name: seguranca
+    needs: [publicar-imagem]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.COMMIT_SHA }}
+
+      - name: Trivy (relatório completo da imagem)
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD aquasec/trivy:0.58.1 \
+            image --no-progress --severity LOW,MEDIUM,HIGH,CRITICAL --format table \
+            "${{ needs.publicar-imagem.outputs.imagem }}" | tee trivy.txt
+
+      - name: Trivy (barreira, falha com vulnerabilidade CRÍTICA que já tem correção)
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD aquasec/trivy:0.58.1 \
+            image --no-progress --severity CRITICAL --ignore-unfixed --exit-code 1 \
+            "${{ needs.publicar-imagem.outputs.imagem }}"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: pip-audit (vulnerabilidades nas dependências Python)
+        run: |
+          python -m venv /tmp/audit
+          /tmp/audit/bin/pip install --quiet ".[api]" pip-audit
+          /tmp/audit/bin/pip-audit --progress-spinner off --skip-editable
+
+      - name: Guardar relatório do Trivy
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-seguranca
+          path: trivy.txt
+          retention-days: 30
+
+  deploy-homologacao:
+    name: deploy-homologacao
+    needs: [publicar-imagem, seguranca]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: homologacao
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.COMMIT_SHA }}
+
+      - name: Login no GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy em homologação (com teste de fumaça e rollback)
+        run: bash scripts/deploy.sh homologacao "${{ needs.publicar-imagem.outputs.imagem }}"
+
+      - name: Gerar tráfego de exemplo e coletar métricas
+        if: ${{ success() }}
+        run: |
+          for arquivo in features/*.feature; do
+            python3 -c 'import json,sys; print(json.dumps({"conteudo": open(sys.argv[1], encoding="utf-8").read(), "nome": sys.argv[1]}))' "$arquivo" \
+              | curl -fsS -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8001/lint
+            echo
+          done
+          sleep 6
+          curl -fsS http://127.0.0.1:8001/metrics | grep '^qa_toolkit_' > metricas-homologacao.txt
+          {
+            echo "### Homologação"
+            echo
+            echo "Métricas coletadas depois do teste de fumaça:"
+            echo '```'
+            grep -E '^qa_toolkit_(validacoes|http_requests)_total' metricas-homologacao.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Guardar logs e métricas
+        if: ${{ always() }}
+        run: docker compose -p qa-homologacao --env-file deploy/homologacao.env logs --no-color --timestamps > logs-homologacao.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: homologacao-logs-e-metricas
+          path: |
+            logs-homologacao.txt
+            metricas-homologacao.txt
+          retention-days: 30
+
+  deploy-producao:
+    name: deploy-producao
+    needs: [publicar-imagem, deploy-homologacao]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # O ambiente "producao" exige aprovação manual (configurado pelo Terraform).
+    environment:
+      name: producao
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.COMMIT_SHA }}
+
+      - name: Definir versão da release
+        id: versao
+        run: |
+          base=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"].rsplit(".",1)[0])')
+          echo "tag=v${base}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login no GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promover a mesma imagem aprovada em homologação (sem novo build)
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:${{ steps.versao.outputs.tag }}" \
+            --tag "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}@${{ needs.publicar-imagem.outputs.digest }}"
+
+      - name: Deploy em produção (com teste de fumaça e rollback)
+        run: bash scripts/deploy.sh producao "${IMAGE_NAME}:${{ steps.versao.outputs.tag }}"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Empacotar a skill para a release
+        run: |
+          pip install --quiet -e .
+          qa-toolkit package skill/cenarios-de-teste --output dist
+
+      - name: Criar a release no GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.versao.outputs.tag }}
+        run: |
+          gh release create "$TAG" dist/cenarios-de-teste.zip \
+            --target "$COMMIT_SHA" \
+            --title "$TAG" \
+            --notes "Imagem: \`docker pull ${IMAGE_NAME}:${TAG}\`
+
+          Commit: ${COMMIT_SHA}
+          Aprovada em homologação e liberada para produção pelo pipeline de CD."
+
+      - name: Derrubar o ambiente
+        if: ${{ always() }}
+        run: docker compose -p qa-producao --env-file deploy/producao.env down -v || true

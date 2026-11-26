@@ -51,14 +51,30 @@ def validate_skill(
         return [Issue(skill_file, f"arquivo {SKILL_FILE} não encontrado")]
 
     text = skill_file.read_text(encoding="utf-8-sig")
+    return validate_skill_text(text, skill_file, required_stages, required_sections)
+
+
+def validate_skill_text(
+    text: str,
+    skill_file: Path,
+    required_stages: tuple[int, ...] = REQUIRED_STAGES,
+    required_sections: tuple[str, ...] = REQUIRED_SECTIONS,
+    standalone: bool = False,
+) -> list[Issue]:
+    """Valida o conteúdo de um SKILL.md já carregado em memória.
+
+    Com ``standalone=True`` (uso pela API), o texto não está numa pasta real:
+    não se compara ``name`` com a pasta nem se conferem links para outros arquivos,
+    só as âncoras internas.
+    """
     frontmatter, body_lines, body_offset, issues = _split_frontmatter(skill_file, text)
     if frontmatter is not None:
-        issues += _check_frontmatter(skill_file, frontmatter)
+        issues += _check_frontmatter(skill_file, frontmatter, check_folder=not standalone)
 
     headings = list(_iter_headings(body_lines, body_offset))
     issues += _check_stages(skill_file, headings, required_stages)
     issues += _check_sections(skill_file, headings, required_sections)
-    issues += _check_links(skill_file, body_lines, body_offset, headings)
+    issues += _check_links(skill_file, body_lines, body_offset, headings, check_files=not standalone)
     return issues
 
 
@@ -83,7 +99,7 @@ def _split_frontmatter(skill_file: Path, text: str) -> tuple[dict | None, list[s
     return None, lines, 0, [Issue(skill_file, "frontmatter sem o --- de fechamento", 1)]
 
 
-def _check_frontmatter(skill_file: Path, data: dict) -> list[Issue]:
+def _check_frontmatter(skill_file: Path, data: dict, check_folder: bool = True) -> list[Issue]:
     issues: list[Issue] = []
     name = data.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -94,7 +110,7 @@ def _check_frontmatter(skill_file: Path, data: dict) -> list[Issue]:
         if len(name) > NAME_MAX_LENGTH:
             issues.append(Issue(skill_file, f"'name' passa de {NAME_MAX_LENGTH} caracteres", 1))
         folder = skill_file.parent.name
-        if name != folder:
+        if check_folder and name != folder:
             issues.append(
                 Issue(skill_file, f"'name' ({name}) difere do nome da pasta da skill ({folder})", 1)
             )
@@ -197,6 +213,7 @@ def _check_links(
     lines: list[str],
     offset: int,
     headings: list[tuple[int, int, str]],
+    check_files: bool = True,
 ) -> list[Issue]:
     issues: list[Issue] = []
     skill_dir = skill_file.parent.resolve()
@@ -212,6 +229,8 @@ def _check_links(
             if not file_part:
                 if anchor not in own_anchors:
                     issues.append(Issue(skill_file, f"âncora interna inexistente: #{anchor}", line_number))
+                continue
+            if not check_files:
                 continue
 
             resolved = (skill_file.parent / file_part).resolve()
