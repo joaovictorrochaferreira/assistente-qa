@@ -293,7 +293,9 @@ API responde 413).
 
 O [Dockerfile](Dockerfile) tem dois estágios. O primeiro gera o pacote wheel a partir do
 código. O segundo instala só esse pacote numa imagem `python:3.12-slim` limpa, sem
-código-fonte nem ferramentas de build. A imagem final tem cerca de 200 MB.
+código-fonte nem ferramentas de build. Antes disso, aplica as correções de segurança dos
+pacotes do sistema e atualiza o pip e o setuptools da imagem base, que vinham com falhas
+conhecidas. A imagem final tem cerca de 240 MB.
 
 Segurança da imagem e do container:
 - roda com o usuário `app` (uid 10001), nunca como root;

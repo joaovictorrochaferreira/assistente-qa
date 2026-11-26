@@ -118,6 +118,8 @@ jobs:
       - name: pip-audit (vulnerabilidades nas dependências Python)
         run: |
           python -m venv /tmp/audit
+          # O pip que vem com o Python pode ter falhas conhecidas: atualiza antes de auditar.
+          /tmp/audit/bin/pip install --quiet --upgrade pip
           /tmp/audit/bin/pip install --quiet ".[api]" pip-audit
           /tmp/audit/bin/pip-audit --progress-spinner off --skip-editable
 

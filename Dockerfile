@@ -24,14 +24,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     QA_TOOLKIT_AMBIENTE=local
 
+# Aplica as correções de segurança já publicadas para os pacotes do sistema.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
 
 COPY --from=build /dist/ /tmp/dist/
 # Instala o wheel local; as versões das dependências têm limites mínimos no pyproject.toml.
 # Melhoria futura: um arquivo de lock com versões exatas (veja a análise no README).
+# O pip e o setuptools da imagem base podem ter falhas conhecidas: atualiza antes de instalar.
 # hadolint ignore=DL3013
-RUN pip install "$(ls /tmp/dist/qa_toolkit-*.whl)[api]" \
+RUN pip install --upgrade "pip>=26.2" "setuptools>=78.1.1" \
+ && pip install "$(ls /tmp/dist/qa_toolkit-*.whl)[api]" \
  && rm -rf /tmp/dist
 
 USER 10001:10001
