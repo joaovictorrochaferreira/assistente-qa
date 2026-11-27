@@ -59,8 +59,14 @@ if ($Imagem.EndsWith(":local")) {
     Write-Log "construindo a imagem $Imagem"
     docker build -t $Imagem . | Out-Host
 } else {
-    docker image inspect $Imagem 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
+    # No PowerShell 5.1, a mensagem de erro do docker viraria uma exceção com
+    # ErrorActionPreference = Stop. Aqui o erro é esperado (imagem ausente), então relaxa só neste trecho.
+    $preferencia = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    docker image inspect $Imagem *> $null
+    $existe = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = $preferencia
+    if ($existe) {
         Write-Log "usando a imagem $Imagem já presente na máquina"
     } else {
         Write-Log "baixando a imagem $Imagem"
